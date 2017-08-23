@@ -56,7 +56,10 @@ def create_model(data, timesteps=None, dt=1, dual=False):
     m.sit_area = m.site['area']
     m.proc_area = m.proc_area[m.proc_area >= 0]
     m.sit_area = m.sit_area[m.sit_area >= 0]
-
+    
+    # determine proportional processes
+    m.pro_prop = m.process_commodity.query('proportional == 1')
+    
     # input ratios for partial efficiencies
     # only keep those entries whose values are
     # a) positive and
@@ -246,6 +249,16 @@ def create_model(data, timesteps=None, dt=1, dual=False):
         initialize=commodity_subset(m.com_tuples, 'Env'),
         doc='Commodities that (might) have a maximum creation limit')
 
+    # proportional process type subsets
+    m.pro_proportional_tuples = pyomo.Set(
+        within=m.sit*m.pro*m.com,
+        initialize=[(site, process, commodity)
+                    for (site, process) in m.pro_tuples
+                    for (pro, commodity, _) in m.pro_prop.index
+                    if process == pro],
+        doc='Process outputs that must follow the demand, e.g.'
+            '(Mid,Domestic heating,Heat)')             
+        
     # Parameters
 
     # weight = length of year (hours) / length of simulation (hours)
@@ -450,7 +463,11 @@ def create_model(data, timesteps=None, dt=1, dual=False):
         m.pro_tuples,
         rule=res_process_capacity_rule,
         doc='process.cap-lo <= total process capacity <= process.cap-up')
-
+    m.res_proportional_process = pyomo.Constraint(
+        m.tm, m.pro_proportional_tuples,
+        rule=res_proportional_process_rule,
+		doc='process output must meet (variable, but constant) share of demand')
+      
     m.res_area = pyomo.Constraint(
         m.sit,
         rule=res_area_rule,
@@ -888,6 +905,12 @@ def res_process_capacity_rule(m, sit, pro):
     return (m.process.loc[sit, pro]['cap-lo'],
             m.cap_pro[sit, pro],
             m.process.loc[sit, pro]['cap-up'])
+
+
+def res_proportional_process_rule(m, tm, sit, pro, com):
+    return (m.e_pro_out[tm, sit, pro, com] ==
+            m.demand.loc[tm][sit, com] *
+            m.delta_pro[sit, pro, com])            
 
 
 # used process area <= maximal process area
